@@ -1,55 +1,90 @@
-use std::{collections::HashMap, path::Path};
+mod context;
+mod log;
+mod reader;
+mod writer;
+
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
-use lru::LruCache;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use context::Context;
+use crossbeam::queue::ArrayQueue;
+use reader::Reader;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tokio::{join, sync::broadcast};
+use writer::Writer;
 
-#[derive(Serialize, Deserialize)]
-struct DataFileEntry {
-    tstamp: i64,
-    key: Bytes,
-    value: Option<Bytes>,
+pub struct Bitcask {
+    handle: Handle,
+    shutdown: broadcast::Sender<()>,
 }
 
-struct LogWriter;
-
-struct LogIndex {
-    len: u64,
-    pos: u64,
-}
-
-impl LogWriter {
-    fn append<T: Serialize>(&mut self, entry: &T) -> Result<LogIndex, Error> {
+impl Bitcask {
+    fn open() -> Result<Self, Error> {
         todo!()
+    }
+
+    fn get_handle(&self) -> Handle {
+        self.handle.clone()
     }
 }
 
-#[derive(Debug)]
-struct LogReader {}
-
-impl LogReader {
-    unsafe fn at<T: DeserializeOwned>(&mut self, len: u64, pos: u64) -> Result<T, Error> {
-        todo!()
+impl Drop for Bitcask {
+    fn drop(&mut self) {
+        self.handle.close();
     }
 }
 
-struct LogDir(LruCache<u64, LogReader>);
+#[derive(Clone, Debug)]
+pub struct Handle {
+    ctx: Arc<Context>,
+    writer: Arc<Mutex<Writer>>,
+    readers: Arc<ArrayQueue<Reader>>,
+}
 
-impl LogDir {
-    unsafe fn read<T, P>(&mut self, path: P, fileid: u64, len: u64, pos: u64) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-        P: AsRef<Path>,
-    {
+impl Handle {
+    fn put(&self, key: Bytes, value: Bytes) -> Result<(), Error> {
+        todo!()
+    }
+    fn del(&self, key: Bytes) -> Result<bool, Error> {
+        todo!()
+    }
+    fn get(&self, key: Bytes) -> Result<Option<Bytes>, Error> {
+        todo!()
+    }
+    fn merge(&self) -> Result<(), Error> {
+        unimplemented!();
+    }
+    fn sync(&self) -> Result<(), Error> {
+        todo!()
+    }
+    fn close(&self) -> Result<(), Error> {
         unimplemented!();
     }
 }
 
-type KeyDir = HashMap<Bytes, KeyDirEntry>;
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("closed!")]
+    Closed,
+    #[error("I/O error")]
+    Io(#[from] io::Error),
+}
 
-struct KeyDirEntry {
-    fileid: u64,
+#[derive(Serialize, Deserialize, Debug)]
+struct HintFileEntry {
+    tstamp: i64,
     len: u64,
     pos: u64,
+    key: Bytes,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct DataFileEntry {
     tstamp: i64,
+    key: Bytes,
+    value: Option<Bytes>,
 }
