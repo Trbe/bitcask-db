@@ -1,6 +1,8 @@
+mod bufio;
 mod context;
 mod log;
 mod reader;
+mod utils;
 mod writer;
 
 use std::{
@@ -14,7 +16,7 @@ use crossbeam::queue::ArrayQueue;
 use reader::Reader;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{join, sync::broadcast};
+use tokio::{join, sync::broadcast, time::error};
 use writer::Writer;
 
 pub struct Bitcask {
@@ -70,8 +72,10 @@ impl Handle {
 pub enum Error {
     #[error("closed!")]
     Closed,
-    #[error("I/O error")]
+    #[error("I/O error - {0}")]
     Io(#[from] io::Error),
+    #[error("Serialization error - {0}")]
+    Serialization(#[from] bincode::Error),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
