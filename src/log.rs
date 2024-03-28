@@ -86,9 +86,9 @@ impl LogDir {
         match self.0.get_mut(&fileid) {
             Some(reader) => reader.at(len, pos),
             None => {
-                let file = utils::datafile_name(path, fileid);
-                let mut reader = LogReader::new(file);
-                let result = reader.at::<T>(len, pos);
+                let file = open(utils::datafile_name(path, fileid))?;
+                let mut reader = LogReader::new(file)?;
+                let result = unsafe { reader.at::<T>(len, pos) };
                 self.0.put(fileid, reader);
                 result
             }
@@ -133,3 +133,14 @@ impl LogReader {
 }
 
 pub(super) struct LogWriter(BufWriterWithPos<fs::File>);
+
+pub(super) fn create<P: AsRef<Path>>(path: P) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .open(path)
+}
+
+pub(super) fn open<P: AsRef<Path>>(path: P) -> io::Result<fs::File> {
+    fs::OpenOptions::new().read(true).open(path)
+}
