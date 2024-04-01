@@ -65,6 +65,7 @@ impl LogStatistics {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct LogDir(LruCache<u64, LogReader>);
 
 impl LogDir {
@@ -120,6 +121,7 @@ impl LogDir {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct LogReader {
     mmap: memmap2::Mmap,
     file: fs::File,
@@ -156,6 +158,7 @@ impl LogReader {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct LogWriter(BufWriterWithPos<fs::File>);
 
 impl LogWriter {
