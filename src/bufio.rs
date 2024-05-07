@@ -15,7 +15,7 @@ impl<R: Read + Seek> BufReaderWithPos<R> {
 }
 
 impl<R: Read> BufReaderWithPos<R> {
-    fn read(&self) -> u64 {
+    pub(super) fn pos(&self) -> u64 {
         self.pos
     }
 }

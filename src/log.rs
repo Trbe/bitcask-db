@@ -10,7 +10,10 @@ use bytes::Buf;
 use lru::LruCache;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{bufio::BufWriterWithPos, utils, Error};
+use crate::{
+    bufio::{BufReaderWithPos, BufWriterWithPos},
+    reader, utils, Error,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct LogIndex {
@@ -177,6 +180,33 @@ impl LogWriter {
 
     pub(super) fn sync(&mut self) -> io::Result<()> {
         self.0.get_ref().sync_all()
+    }
+}
+
+pub(super) struct LogIterator(BufReaderWithPos<fs::File>);
+
+impl LogIterator {
+    pub(super) fn new(file: fs::File) -> io::Result<Self> {
+        let reader = BufReaderWithPos::new(file)?;
+        Ok(Self(reader))
+    }
+
+    pub(super) fn next<T:DeserializeOwned>(&mut self)-> Result<Option<(LogIndex, T)>,Error> {
+        let pos = self.0.pos();
+        match bincode::deserialize_from(&mut self.0) {
+            Ok(entry)=> {
+                let len = self.0.pos() -pos;
+                let index = LogIndex {len, pos};
+                Ok(Some((index, entry)))
+            }
+            Err(e) => match e.as_ref() {
+                bincode::ErrorKind::Io(ioe) => match ioe.kind() {
+                    io::ErrorKind::UnexpectedEof =>Ok(None),
+                    _ => Err(e.into()),
+                },
+                _ => Err(e.into()),
+            }
+        }
     }
 }
 

@@ -5,20 +5,26 @@ mod reader;
 mod utils;
 mod writer;
 
-use std::{
-    io,
-    sync::{Arc, Mutex},
-};
+use std::{io, sync::Arc};
 
 use bytes::Bytes;
-use context::Context;
-use crossbeam::queue::ArrayQueue;
-use reader::Reader;
+use crossbeam::{queue::ArrayQueue, utils::Backoff};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{join, sync::broadcast, time::error};
-use writer::Writer;
+use tokio::{join, sync::broadcast};
 
+use self::{context::Context, reader::Reader, writer::Writer};
+
+pub trait KeyValueStorage: Clone + Send + 'static {
+    type Error: std::error::Error + Send + Sync;
+
+    fn set(&self, key: Bytes, value: Bytes) -> Result<(), Self::Error>;
+    fn get(&self, key: Bytes) -> Result<Option<Bytes>, Self::Error>;
+    fn del(&self, key: Bytes) -> Result<bool, Self::Error>;
+}
+
+#[allow(dead_code)]
 pub struct Bitcask {
     handle: Handle,
     shutdown: broadcast::Sender<()>,
@@ -49,22 +55,65 @@ pub struct Handle {
 
 impl Handle {
     fn put(&self, key: Bytes, value: Bytes) -> Result<(), Error> {
-        todo!()
+        if self.ctx.is_closed() {
+            return Err(Error::Closed);
+        }
+        self.writer.lock().put(key, value)
     }
+
     fn del(&self, key: Bytes) -> Result<bool, Error> {
-        todo!()
+        if self.ctx.is_closed() {
+            return Err(Error::Closed);
+        }
+        self.writer.lock().delete(key)
     }
+
     fn get(&self, key: Bytes) -> Result<Option<Bytes>, Error> {
-        todo!()
+        if self.ctx.is_closed() {
+            return Err(Error::Closed);
+        }
+        let backoff = Backoff::new();
+        loop {
+            if let Some(reader) = self.readers.pop() {
+                let result = reader.get(key);
+                self.readers.push(reader).expect("unreachable error");
+                break result;
+            }
+            backoff.spin();
+        }
     }
+
+    #[allow(dead_code)]
     fn merge(&self) -> Result<(), Error> {
         unimplemented!();
     }
+
+    #[allow(dead_code)]
     fn sync(&self) -> Result<(), Error> {
-        todo!()
+        if self.ctx.is_closed() {
+            return Err(Error::Closed);
+        }
+        self.writer.lock().sync()
     }
-    fn close(&self) -> Result<(), Error> {
-        unimplemented!();
+
+    fn close(&self) {
+        self.ctx.close()
+    }
+}
+
+impl KeyValueStorage for Handle {
+    type Error = Error;
+
+    fn del(&self, key: Bytes) -> Result<bool, Self::Error> {
+        self.del(key)
+    }
+
+    fn get(&self, key: Bytes) -> Result<Option<Bytes>, Self::Error> {
+        self.get(key)
+    }
+
+    fn set(&self, key: Bytes, value: Bytes) -> Result<(), Self::Error> {
+        self.put(key, value)
     }
 }
 
