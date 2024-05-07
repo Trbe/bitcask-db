@@ -10,6 +10,7 @@ use crate::{
 
 const MAX_FILE_SIZE: u64 = 16 * 1024 * 1024;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) struct Writer {
     ctx: Arc<Context>,
@@ -75,7 +76,7 @@ impl Writer {
     ) -> Result<KeyDirEntry, Error> {
         let datafile_entry = DataFileEntry { tstamp, key, value };
         let index = self.writer.append(&datafile_entry)?;
-        self.writer.sync()?;
+        //self.writer.sync()?;
         self.written_bytes += index.len;
 
         {
@@ -106,6 +107,7 @@ impl Writer {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(super) fn get_stats(&self) -> &HashMap<u64, LogStatistics> {
         &self.stats
     }

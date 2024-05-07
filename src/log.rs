@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, Seek, Write},
+    io::{self, Write},
     num::NonZeroUsize,
     path::Path,
     u64, usize,
@@ -12,7 +12,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     bufio::{BufReaderWithPos, BufWriterWithPos},
-    reader, utils, Error,
+    utils, Error,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub(super) struct LogStatistics {
     dead_bytes: u64,
 }
 
+#[allow(dead_code)]
 impl LogStatistics {
     pub(super) fn add_live(&mut self) {
         self.live_keys += 1;
@@ -71,6 +72,7 @@ impl LogStatistics {
 #[derive(Debug)]
 pub(super) struct LogDir(LruCache<u64, LogReader>);
 
+#[allow(dead_code)]
 impl LogDir {
     pub(super) fn new(size: NonZeroUsize) -> Self {
         Self(LruCache::new(size))

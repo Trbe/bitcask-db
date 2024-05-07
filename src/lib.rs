@@ -5,16 +5,24 @@ mod reader;
 mod utils;
 mod writer;
 
-use std::{io, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, io, path::Path, sync::Arc};
 
 use bytes::Bytes;
+use context::KeyDirEntry;
 use crossbeam::{queue::ArrayQueue, utils::Backoff};
+use crossbeam_skiplist::SkipMap;
+use log::{LogIterator, LogStatistics};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{join, sync::broadcast};
+use tokio::sync::broadcast;
+
+use crate::log::{LogDir, LogWriter};
 
 use self::{context::Context, reader::Reader, writer::Writer};
+
+const CONCURRENCY: usize = 4;
+const READER_CACHE_SIZE: usize = 16;
 
 pub trait KeyValueStorage: Clone + Send + 'static {
     type Error: std::error::Error + Send + Sync;
@@ -30,9 +38,45 @@ pub struct Bitcask {
     shutdown: broadcast::Sender<()>,
 }
 
+#[allow(dead_code)]
 impl Bitcask {
-    fn open() -> Result<Self, Error> {
-        todo!()
+    fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let (keydir, stats, active_fileid) = rebuild_storage(&path)?;
+
+        let ctx = Arc::new(Context::new(&path, keydir));
+        let readers = Arc::new(ArrayQueue::new(CONCURRENCY));
+
+        for _ in 0..readers.capacity() {
+            readers
+                .push(Reader::new(
+                    ctx.clone(),
+                    RefCell::new(LogDir::new(READER_CACHE_SIZE.try_into().unwrap())),
+                ))
+                .expect("error");
+        }
+
+        let writer = Arc::new(Mutex::new(Writer::new(
+            ctx.clone(),
+            RefCell::new(LogDir::new(READER_CACHE_SIZE.try_into().unwrap())),
+            LogWriter::new(log::create(utils::datafile_name(&path, active_fileid))?)?,
+            stats,
+            active_fileid,
+            0,
+        )));
+
+        let handle = Handle{
+            ctx,
+            writer,
+            readers,
+        };
+
+        let (shutdown, _) = broadcast::channel(1);
+        let bitcask = Self {
+            handle,
+            shutdown,
+        };
+
+        Ok(bitcask)
     }
 
     fn get_handle(&self) -> Handle {
@@ -115,6 +159,130 @@ impl KeyValueStorage for Handle {
     fn set(&self, key: Bytes, value: Bytes) -> Result<(), Self::Error> {
         self.put(key, value)
     }
+}
+
+fn rebuild_storage<P: AsRef<Path>>(
+    path: P,
+) -> Result<
+    (
+        SkipMap<Bytes, KeyDirEntry>,
+        HashMap<u64, LogStatistics>,
+        u64,
+    ),
+    Error,
+> {
+    let keydir = SkipMap::default();
+    let mut stats = HashMap::default();
+    let fileids = utils::sorted_fileids(&path)?;
+
+    let mut active_fileid = None;
+    for fileid in fileids {
+        match &mut active_fileid {
+            None => active_fileid = Some(fileid),
+            Some(id) => {
+                if fileid > *id {
+                    *id = fileid;
+                }
+            }
+        }
+        if let Err(e) = populate_keydir_with_hintfile(&path, fileid, &keydir, &mut stats) {
+            match e {
+                Error::Io(ref ioe) => match ioe.kind() {
+                    io::ErrorKind::NotFound => {
+                        populate_keydir_with_datafile(&path, fileid, &keydir, &mut stats)?;
+                    }
+                    _ => return Err(e),
+                },
+                _ => return Err(e),
+            }
+        }
+    }
+
+    let active_fileid = active_fileid.map(|id| id + 1).unwrap_or_default();
+    Ok((keydir, stats, active_fileid))
+}
+
+fn populate_keydir_with_hintfile<P>(
+    path: P,
+    fileid: u64,
+    keydir: &SkipMap<Bytes, KeyDirEntry>,
+    stats: &mut HashMap<u64, LogStatistics>,
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
+    let file = log::open(utils::hintfile_name(&path, fileid))?;
+    let mut hintfile_iter = LogIterator::new(file)?;
+    while let Some((_, entry)) = hintfile_iter.next::<HintFileEntry>()? {
+        let keydir_entry = KeyDirEntry {
+            fileid,
+            len: entry.len,
+            pos: entry.pos,
+            tstamp: entry.tstamp,
+        };
+        // Hint file always contains live keys
+        stats.entry(fileid).or_default().add_live();
+        // Overwrite previously written value
+        let prev_entry = keydir.get(&entry.key);
+        keydir.insert(entry.key, keydir_entry);
+        if let Some(prev_entry) = prev_entry {
+            stats
+                .entry(prev_entry.value().fileid)
+                .or_default()
+                .overwrite(prev_entry.value().len);
+        }
+    }
+    Ok(())
+}
+
+fn populate_keydir_with_datafile<P>(
+    path: P,
+    fileid: u64,
+    keydir: &SkipMap<Bytes, KeyDirEntry>,
+    stats: &mut HashMap<u64, LogStatistics>,
+) -> Result<(), Error>
+where
+    P: AsRef<Path>,
+{
+    let file = log::open(utils::datafile_name(&path, fileid))?;
+    let mut datafile_iter = LogIterator::new(file)?;
+    while let Some((datafile_index, datafile_entry)) = datafile_iter.next::<DataFileEntry>()? {
+        match datafile_entry.value {
+            // Tombstone
+            None => {
+                stats
+                    .entry(fileid)
+                    .or_default()
+                    .add_dead(datafile_index.len);
+                if let Some(prev_entry) = keydir.remove(&datafile_entry.key) {
+                    stats
+                        .entry(prev_entry.value().fileid)
+                        .or_default()
+                        .overwrite(prev_entry.value().len);
+                }
+            }
+            Some(_) => {
+                let keydir_entry = KeyDirEntry {
+                    fileid,
+                    len: datafile_index.len,
+                    pos: datafile_index.pos,
+                    tstamp: datafile_entry.tstamp,
+                };
+                // Add live keys
+                stats.entry(fileid).or_default().add_live();
+                // Overwrite previous value
+                let prev_entry = keydir.get(&datafile_entry.key);
+                keydir.insert(datafile_entry.key, keydir_entry);
+                if let Some(prev_entry) = prev_entry {
+                    stats
+                        .entry(prev_entry.value().fileid)
+                        .or_default()
+                        .overwrite(prev_entry.value().len);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Error, Debug)]

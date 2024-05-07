@@ -43,6 +43,7 @@ impl Context {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) struct KeyDirEntry {
     pub(super) fileid: u64,
