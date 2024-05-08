@@ -40,7 +40,7 @@ pub struct Bitcask {
 
 #[allow(dead_code)]
 impl Bitcask {
-    fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let (keydir, stats, active_fileid) = rebuild_storage(&path)?;
 
         let ctx = Arc::new(Context::new(&path, keydir));
@@ -64,22 +64,19 @@ impl Bitcask {
             0,
         )));
 
-        let handle = Handle{
+        let handle = Handle {
             ctx,
             writer,
             readers,
         };
 
         let (shutdown, _) = broadcast::channel(1);
-        let bitcask = Self {
-            handle,
-            shutdown,
-        };
+        let bitcask = Self { handle, shutdown };
 
         Ok(bitcask)
     }
 
-    fn get_handle(&self) -> Handle {
+    pub fn get_handle(&self) -> Handle {
         self.handle.clone()
     }
 }

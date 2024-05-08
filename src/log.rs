@@ -193,21 +193,21 @@ impl LogIterator {
         Ok(Self(reader))
     }
 
-    pub(super) fn next<T:DeserializeOwned>(&mut self)-> Result<Option<(LogIndex, T)>,Error> {
+    pub(super) fn next<T: DeserializeOwned>(&mut self) -> Result<Option<(LogIndex, T)>, Error> {
         let pos = self.0.pos();
         match bincode::deserialize_from(&mut self.0) {
-            Ok(entry)=> {
-                let len = self.0.pos() -pos;
-                let index = LogIndex {len, pos};
+            Ok(entry) => {
+                let len = self.0.pos() - pos;
+                let index = LogIndex { len, pos };
                 Ok(Some((index, entry)))
             }
             Err(e) => match e.as_ref() {
                 bincode::ErrorKind::Io(ioe) => match ioe.kind() {
-                    io::ErrorKind::UnexpectedEof =>Ok(None),
+                    io::ErrorKind::UnexpectedEof => Ok(None),
                     _ => Err(e.into()),
                 },
                 _ => Err(e.into()),
-            }
+            },
         }
     }
 }
