@@ -46,16 +46,11 @@ struct Input {
     url: Bytes,
 }
 
-#[allow(dead_code)]
-async fn accept_form(Form(input): Form<Input>) {
-    dbg!(&input.url);
-}
-
 async fn post_url(State(db): State<Handle>, Form(input): Form<Input>) -> String{
     let rng = rand::thread_rng();
     let id = rng.sample_iter(&Alphanumeric).take(8).collect::<Bytes>();
     match db.set(id.clone(), input.url) {
-        Ok(_) => unsafe { "http://probd.cn:3000/s/".to_string() + std::str::from_utf8_unchecked(&id) },
+        Ok(_) => unsafe { "http://192.168.122.1:3000/s/".to_string() + std::str::from_utf8_unchecked(&id) },
         Err(_) => String::from("Error"),
     }
 }

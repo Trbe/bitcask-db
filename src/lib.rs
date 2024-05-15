@@ -35,6 +35,7 @@ pub trait KeyValueStorage: Clone + Send + 'static {
 #[allow(dead_code)]
 pub struct Bitcask {
     handle: Handle,
+    // 
     shutdown: broadcast::Sender<()>,
 }
 
@@ -217,9 +218,7 @@ where
             pos: entry.pos,
             tstamp: entry.tstamp,
         };
-        // Hint file always contains live keys
         stats.entry(fileid).or_default().add_live();
-        // Overwrite previously written value
         let prev_entry = keydir.get(&entry.key);
         keydir.insert(entry.key, keydir_entry);
         if let Some(prev_entry) = prev_entry {
@@ -245,7 +244,6 @@ where
     let mut datafile_iter = LogIterator::new(file)?;
     while let Some((datafile_index, datafile_entry)) = datafile_iter.next::<DataFileEntry>()? {
         match datafile_entry.value {
-            // Tombstone
             None => {
                 stats
                     .entry(fileid)
@@ -265,9 +263,7 @@ where
                     pos: datafile_index.pos,
                     tstamp: datafile_entry.tstamp,
                 };
-                // Add live keys
                 stats.entry(fileid).or_default().add_live();
-                // Overwrite previous value
                 let prev_entry = keydir.get(&datafile_entry.key);
                 keydir.insert(datafile_entry.key, keydir_entry);
                 if let Some(prev_entry) = prev_entry {
